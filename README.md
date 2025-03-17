@@ -1,1 +1,3 @@
-# goit-de-hw-03
+# goit-de-hw-03 
+
+HW T3 
