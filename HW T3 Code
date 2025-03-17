@@ -1,0 +1,216 @@
+HW T3 Code 
+
+!pip install pyspark
+
+import os
+import requests
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+
+# Створення SparkSession
+spark = SparkSession.builder \
+    .appName("DataAnalysisHomework") \
+    .config("spark.executor.memory", "2g") \
+    .getOrCreate()
+
+print(f"Використовується Apache Spark версії: {spark.version}")
+
+# Функція для завантаження файлів за посиланнями на Google Drive
+def download_file_from_google_drive(url, destination):
+    # Перевіряємо, чи існує директорія для завантаження
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+
+    # Перетворення URL-посилання Google Drive на прямe посилання для завантаження
+    file_id = url.split('/')[5]
+    direct_download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+    try:
+        response = requests.get(direct_download_url)
+        with open(destination, 'wb') as f:
+            f.write(response.content)
+        print(f"Файл успішно завантажено: {destination}")
+        return True
+    except Exception as e:
+        print(f"Помилка завантаження файлу {destination}: {e}")
+        return False
+
+# Створюємо директорію для даних
+!mkdir -p /content/data
+
+# Посилання на файли
+users_url = "https://drive.google.com/file/d/1ess40R_3cVkUqwW0DLN4OV8AlXKfAD6k/view?usp=sharing"
+products_url = "https://drive.google.com/file/d/1pqfk4nn97rMeRYMgW4zWyB5C0s0l5mZK/view?usp=sharing"
+purchases_url = "https://drive.google.com/file/d/1lJJa7Z44EOcYUbGvgtFFVujmV-pxv-BI/view?usp=sharing"
+
+# Шляхи до локальних файлів
+users_path = "/content/data/users.csv"
+products_path = "/content/data/products.csv"
+purchases_path = "/content/data/purchases.csv"
+
+# Завантаження файлів
+download_file_from_google_drive(users_url, users_path)
+download_file_from_google_drive(products_url, products_path)
+download_file_from_google_drive(purchases_url, purchases_path)
+
+# Визначення схем даних
+users_schema = StructType([
+    StructField("user_id", IntegerType(), True),
+    StructField("name", StringType(), True),
+    StructField("age", FloatType(), True),
+    StructField("email", StringType(), True)
+])
+
+products_schema = StructType([
+    StructField("product_id", FloatType(), True),
+    StructField("product_name", StringType(), True),
+    StructField("category", StringType(), True),
+    StructField("price", FloatType(), True)
+])
+
+purchases_schema = StructType([
+    StructField("purchase_id", IntegerType(), True),
+    StructField("user_id", FloatType(), True),
+    StructField("product_id", FloatType(), True),
+    StructField("date", StringType(), True),
+    StructField("quantity", FloatType(), True)
+])
+
+# Читання CSV-файлів
+try:
+    users_df = spark.read.format("csv") \
+        .option("header", "true") \
+        .option("mode", "DROPMALFORMED") \
+        .schema(users_schema) \
+        .load(users_path)
+
+    print(f"Файл users.csv успішно завантажено, {users_df.count()} рядків")
+except Exception as e:
+    print(f"Помилка при завантаженні users.csv: {e}")
+
+try:
+    products_df = spark.read.format("csv") \
+        .option("header", "true") \
+        .option("mode", "DROPMALFORMED") \
+        .schema(products_schema) \
+        .load(products_path)
+
+    print(f"Файл products.csv успішно завантажено, {products_df.count()} рядків")
+except Exception as e:
+    print(f"Помилка при завантаженні products.csv: {e}")
+
+try:
+    purchases_df = spark.read.format("csv") \
+        .option("header", "true") \
+        .option("mode", "DROPMALFORMED") \
+        .schema(purchases_schema) \
+        .load(purchases_path)
+
+    print(f"Файл purchases.csv успішно завантажено, {purchases_df.count()} рядків")
+except Exception as e:
+    print(f"Помилка при завантаженні purchases.csv: {e}")
+
+# Перевірка структури даних
+print("\nСтруктура даних користувачів:")
+users_df.printSchema()
+users_df.show(5)
+
+print("\nСтруктура даних продуктів:")
+products_df.printSchema()
+products_df.show(5)
+
+print("\nСтруктура даних покупок:")
+purchases_df.printSchema()
+purchases_df.show(5)
+
+# Завдання 1: Очищення даних від рядків з пропущеними значеннями
+users_clean = users_df.na.drop()
+products_clean = products_df.na.drop()
+purchases_clean = purchases_df.na.drop()
+
+# Перевіряємо результати очищення
+print("\nРезультати очищення даних:")
+print(f"Users: було {users_df.count()}, стало {users_clean.count()} рядків")
+print(f"Products: було {products_df.count()}, стало {products_clean.count()} рядків")
+print(f"Purchases: було {purchases_df.count()}, стало {purchases_clean.count()} рядків")
+
+# Кешуємо очищені DataFrame для прискорення подальших операцій
+users_clean.cache()
+products_clean.cache()
+purchases_clean.cache()
+
+# Завдання 2: Загальна сума покупок за категоріями
+total_by_category = purchases_clean \
+    .join(products_clean,
+          purchases_clean["product_id"] == products_clean["product_id"],
+          "inner") \
+    .withColumn("total_cost", purchases_clean["quantity"] * products_clean["price"]) \
+    .groupBy(products_clean["category"]) \
+    .agg(round(sum("total_cost"), 2).alias("total_amount")) \
+    .orderBy("category")
+
+print("\nЗагальна сума покупок за категоріями:")
+total_by_category.show()
+
+# Завдання 3: Сума покупок за категоріями для вікової групи 18-25
+young_purchases = purchases_clean \
+    .join(products_clean,
+          purchases_clean["product_id"] == products_clean["product_id"],
+          "inner") \
+    .join(users_clean,
+          purchases_clean["user_id"] == users_clean["user_id"],
+          "inner") \
+    .filter((users_clean["age"] >= 18) & (users_clean["age"] <= 25)) \
+    .withColumn("total_cost", purchases_clean["quantity"] * products_clean["price"])
+
+young_by_category = young_purchases \
+    .groupBy(products_clean["category"]) \
+    .agg(round(sum("total_cost"), 2).alias("young_spent")) \
+    .orderBy("category")
+
+print("\nСума покупок за категоріями для вікової групи 18-25:")
+young_by_category.show()
+
+# Завдання 4-5: Частка покупок за категоріями для вікової групи 18-25
+
+# Розраховуємо загальну суму витрат вікової групи 18-25
+total_young_spent = young_purchases.agg(sum("total_cost")).collect()[0][0]
+
+# Обчислюємо відсоток витрат за категоріями
+percentage_by_category = young_by_category \
+    .withColumn("percentage",
+               round(col("young_spent") / total_young_spent * 100, 2)) \
+    .orderBy(desc("percentage"))
+
+print("\nЧастка покупок за категоріями для вікової групи 18-25:")
+print(f"Загальна сума витрат групи 18-25: {total_young_spent}")
+percentage_by_category.show()
+
+# Завдання 6: ТОП-3 категорії з найвищим відсотком витрат
+top_3_categories = percentage_by_category.limit(3)
+
+print("\nТОП-3 категорії з найвищим відсотком витрат (вікова група 18-25):")
+top_3_categories.show()
+
+# Зберігаємо результати у CSV
+top_3_categories.coalesce(1) \
+    .write \
+    .mode("overwrite") \
+    .option("header", "true") \
+    .csv("/content/top_3_categories_result")
+
+print("\nРезультати збережено у директорію: /content/top_3_categories_result")
+
+# Відображаємо всі файли у директорії результатів
+!ls -la /content/top_3_categories_result
+
+# Звільняємо кешовані дані
+users_clean.unpersist()
+products_clean.unpersist()
+purchases_clean.unpersist()
+
+# Зупиняємо SparkSession
+spark.stop()
+
+print("\nЗавдання успішно виконано!")
+
